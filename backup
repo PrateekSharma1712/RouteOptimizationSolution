@@ -1,0 +1,111 @@
+rm(list=ls(all=T))
+source("GAfunctions.R")
+old = Sys.time()
+library(reshape2)
+library("RMySQL")
+mydb = dbConnect(MySQL(), user = 'root', password= 'admin', dbname = 'spring_clean',
+                 host = '127.0.0.1')
+dbListTables(mydb)
+
+#reading tables, creating data frames, removing tables after filling data frames
+table_parameters = dbSendQuery(mydb, "select * from parameters_info_db")
+data_parameters = fetch(table_parameters, n = -1)
+
+table_stops = dbSendQuery(mydb, "select * from stops_info_db")
+data_stops = fetch(table_stops, n = -1)
+
+table_travel_time = dbSendQuery(mydb, "select * from travel_time_matrix_db")
+data_travel_time = fetch(table_travel_time, n = -1)
+
+#clearing result of each table and closing connection
+dbClearResult(table_parameters)
+dbClearResult(table_stops)
+dbClearResult(table_travel_time)
+dbDisconnect(mydb)
+rm(table_parameters)
+rm(table_stops)
+rm(table_travel_time)
+rm(mydb)
+
+stops = data_stops$STOP_ID[7:195]
+depots = data_stops$STOP_ID[1:6]
+data3 = stops_depot_matrix_creation(data_travel_time)
+
+travel_times = c()
+no_of_vehicles = c()
+min_stops_vector = c()
+max_stops_vector = c()
+max_early_time_window_vector = c()
+max_late_time_window_vector = c()
+for (i in 1:nrow(data_parameters)) {
+  min_stops = data_parameters[2][[1]][i]
+  max_stops = data_parameters[1][[1]][i]
+  max_route_time = data_parameters[3][[1]][i]
+  max_early_time_window = data_parameters[4][[1]][i]
+  max_late_time_window = data_parameters[5][[1]][i]
+  
+  population_df = genInitialPopulation(min_stops, max_stops, max_route_time, max_early_time_window, max_late_time_window)
+  
+  mutstartProb=0.5
+  origPopSize = nrow(population_df)
+  NewPop = population_df
+  count = 0
+  i = 1
+  
+  while(count < 9) {
+    i = i + 1
+    print(paste("**",i))
+    eliteSolutions = NewPop[1:10,]
+    set.seed(i)
+    
+    eliteSolution = eliteSolutions[sample(1:10, 1),]
+    NewPop = population_df[-(1:nrow(population_df)),]
+    mut = mutstartProb/i
+    a = runif(1,0,1)
+    NewPop = eliteSolutions
+    while (nrow(NewPop)<origPopSize) {
+      if (a<mut) {
+        #mutate
+        # print("mutate")
+        NewPop[nrow(NewPop)+1,]=fnMutate(eliteSolution)
+        if (nrow(NewPop)==origPopSize){break()}
+      } else {
+        #crossover
+        # print("crossover")
+        NewPop[nrow(NewPop)+1,] = fnCrossover(eliteSolution)
+        if (nrow(NewPop)==origPopSize){break()}
+      }
+      
+    }
+    NewPop = NewPop[order(NewPop$Time),]
+    travel_times = append(travel_times, as.numeric(NewPop[1,2]))
+    min_stops_vector = append(min_stops_vector, min_stops)
+    max_stops_vector = append(max_stops_vector, max_stops)
+    max_early_time_window_vector = append(max_early_time_window_vector, max_early_time_window)
+    max_late_time_window_vector = append(max_late_time_window_vector, max_late_time_window)
+    print(paste(eliteSolutions[1,2], NewPop[1,2]))
+    if(eliteSolutions[1,2] == NewPop[1,2]) {
+      count = count + 1
+    } else {
+      count = 0
+    }
+    print(paste("count", count))
+    if(count == 10) {
+      return(NewPop[1,2])
+      break()
+    }
+  }
+  
+}
+
+new = Sys.time() - old
+print(new)
+results_df = data.frame(Min_Stops = min_stops_vector,
+                        Max_Stops = max_stops_vector, 
+                        Max_Early_Time_Window = max_early_time_window_vector,
+                        Max_Late_Time_Window = max_late_time_window_vector,
+                        Time = travel_times)
+
+library(xlsx)
+write.xlsx(results_df, "results.xlsx")
+
